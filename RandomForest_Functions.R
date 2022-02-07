@@ -5,23 +5,375 @@
 # Load Packages -----------------------------------------------------------
 library(tidyverse)
 library(ggpubr)
+library(cowplot)
+library(randomForest)
+library(ViewPipeSteps) #    %P>% = print and pipe operator
 
+
+# Functions: supporting rf ---------------------------------------------------
+mtry.guide <- function(npred, #Numeric. Number of predictor variables. 
+                       rf.type, #Character. One of: reg, class. Whether using regression (reg) or classification (class).
+                       spread.upper = 5, #Total number of mtry to attempt above ideal mtry in hyperparameter tuning
+                       spread.lower = 4 #Total number of mtry to attempt below ideal mtry in hyperparameter tuning
+)
+{
+  if(rf.type == "class"){
+    m <- sqrt(npred) #sqrt(p) for mtry classification guide
+  }
+  
+  if(rf.type == "reg"){
+    m <- npred/3 #p/3 for mtry regression guide
+  }
+  
+  m.upper <- round(m + spread.upper, digits = 0)
+  m.lower <- round(m - spread.lower, digits = 0)
+  
+  #Unit test: m.lower greater than 0? 
+  if(m.lower <= 0){
+    print("Warning: lower range of mtry is less than 0. Adjusting mtry range all values are greater than 0. Consider reducing the mtry guide spread.")
+    m.add <- 1 - m.lower
+    m.lower <- m.lower + m.add
+    m.upper <- m.upper + m.add
+    
+    print(paste0("Added: ", m.add))
+  }
+
+  range <- eval(parse(text = paste0(m.lower, ":", m.upper)))
+
+  return(list(ideal.mtry = m, upper.mtry = m.upper, lower.mtry = m.lower, range = range))
+}
+
+  
+rf.resplot <- function(rf.cm){
+  resplot <- rf.cm %>%
+    ggscatter(x = "actual", y = "pred",
+              add = "reg.line", conf.int = TRUE,
+              add.params = list(color = "blue",
+                                fill = "lightgray")) +
+    stat_cor(method = "pearson", aes(label = ..r.label..)) + 
+    geom_abline(intercept = 0, slope = 1, linetype = 2) + 
+    xlim(0, max(rf.cm$actual)) + 
+    ylim(0, max(rf.cm$pred))
+}
 
 
 # Functions: Split Methods ------------------------------------------------
+split.ratio <- function(df,
+                        nsets = 10, #number of train/tests
+                        train.ratio = 0.80, #proportion; default is 80:20
+                        rf.type, #One of: "class" or "reg" 
+                        vpred #Intended predictor variable. If rf.type = class, this is a required input. 
+                        )
+{
+  #Unit test: ratio
+  if(train.ratio > 1){
+    print("Error: Train.ratio must be a proportion")
+    print("Running UNDECLARED to kill script.")
+    UNDECLARED()
+  }
+  
+  #Unit test: check that predictor variable is a factor
+  if(rf.type == "class"){
+    qc <- is.factor(eval(parse(text = paste0("df$", vpred))))
+    if(qc == FALSE){
+      print("Error: Predictor variable must be a factor.")
+      print("Running UNDECLARED to kill script.")
+      UNDECLARED()
+    }
+  }
+    
+  #Split
+  input <- 1:nsets
+  tsets <- as.character()
+  hsets <- as.character()
+  x2 <- df
+  print(sapply(x2, function(x) sum(is.na(x2))))
+  x3 <- df %>% na.omit
+  print(sapply(x3, function(x) sum(is.na(x3))))
+  
+  
+  for (i in input){
+    set.seed(i)
+    print(i)
+    
+    sample <- sample(1:nrow(x3), nrow(x3)*train.ratio)
+    assign(paste("train", i, sep = "."), x3[sample,], envir = .GlobalEnv) #train.x (using tune wrapper downstream to separate into train vs. validation)
+    assign(paste("hold", i, sep = "."), x3[-sample,], envir = .GlobalEnv) #hold.x; test/hold-out set
+  }
+}
+
+
 
 
 
 # Function: Regression RF ----------------------------------------------------
+sa_rfreg <- function(vpred, 
+                     custom.name = FALSE,
+                     date = "",
+                     dataframe.name = "",
+                     predictors.name = "", 
+                     mtry = 1:10,
+                     ntree = (1:10)*500,
+                     nset = 10, #Number of train/hold sets
+                     wd = getwd()
+)
+{
+  
+  #Output parent folder
+  setwd(paste(wd))
+  
+  #Output folder
+  if(custom.name == FALSE){
+    save.name <- readline("Input save.name: RF_df_date_InputVariables_PredictVariable:")
+  }
+  if (custom.name == TRUE){
+    save.name <- paste(dataframe.name, date, predictors.name, vpred, sep = "_")
+  }
+  
+  dir.create(save.name)
+  directory <- paste(wd, save.name, sep = "/")
+  print(directory)
+  setwd(directory)
+  
+  
+  #RF Loop
+  mbest.tab <- data.frame()
+  mperf.tab <- data.frame()
+  rfimp.tab <- data.frame()
+  classmatrix.names <- ""
+  print("Initiating RF Code")
+  for (i in 1:nset){ 
+    print(i)
+    print(Sys.time())
+    
+    mbest <- data.frame()
+    mperf <- data.frame()
+    rfimp <- data.frame()
+    
+    tname <- paste("train", i, sep = ".")
+    train <- get(tname)
+    hname <- paste("hold", i, sep = ".")
+    hold <- get(hname)
+    
+    print("Initate Tuning")
+    #Tuning
+    rf = e1071::tune.randomForest(train[,-which(names(train) %in% vpred)], #Remove predicted label from train df
+                                  eval(parse(text = paste("train", vpred, sep = "$"))), #Select predicted label (train$vpred)
+                                  data = train, 
+                                  type = "regression", mtry = mtry, ntree = ntree,
+                                  tunecontrol = e1071::tune.control(sampling = "cross",cross=5))
+    
+    print("Tuning Complete")
+    #Model performance table
+    name <- rep(tname, length(mtry) * length(ntree)) 
+    mperf <- cbind(name, rf$performances)
+    mperf.tab <- rbind(mperf.tab, mperf)
+    
+    
+    #Test/Hold-Out Performance
+    #rfp = random forest with best parameters 
+    rfp = randomForest::randomForest(train[,-which(names(train) %in% vpred)], #Remove predicted label from train df
+                                     eval(parse(text = paste("train", vpred, sep = "$"))), #Select predicted label (train$vpred)
+                                     data = train, 
+                                     type = "regression", mtry = rf$best.parameters$mtry, 
+                                     ntree = rf$best.parameters$ntree, importance = TRUE)
+    
+    
+    rfimp<- randomForest::importance(rfp) %>% data.frame() %>% rownames_to_column(var = "predictors") %>% mutate(set = i)
+    rfimp.tab <- rbind(rfimp.tab, rfimp) #rf importance table for export
+    
+    
+    
+    
+    #Hold-out set predictions and performance
+    pred <- predict(rfp,hold)
+    actual <- eval(parse(text = paste0("hold$", vpred)))
+    
+    pred.tab <- cbind(pred, actual) %>% data.frame %>% mutate(mpe = ((actual - pred)/actual)*100) %>% mutate(set = i)
+    mse <- mean((pred - actual)^2)
+    rmse <- sqrt(mse)
+    pearson <- cor(pred, actual)
+    mape <- mean(((abs(actual - pred))/actual)*100) #mean absolute percent error; better than MPE because +/- absolute values don't cancel out
+    
+    
+    assign(paste("rf.tab", i, sep = "."), pred.tab) #list of actual/predicted 
+    
+    #Hold set statistics of best performing model for each train/test set 
+    name <- tname #Model best parameters & ME/ARI
+    mbest <- data.frame(cbind(name, rf$best.parameters$mtry, rf$best.parameters$ntree, mse, rmse, pearson, mape))
+    mbest.tab <- data.frame(rbind(mbest.tab,mbest))
+    
+    #Classification matrix (classification) or list of actual/predicted (regression)
+    classmatrix.names <- c(classmatrix.names, paste("rf.tab", i, sep = "."))
+    print("Hold-Out Assessed")
+  } #rf trainings/testing code 
+  
+  print("RF Complete")
+  
+  rf.cm <- c()
+  for (i in classmatrix.names){
+    print(i)
+    if(i != ""){
+      cm <- get(i)
+      print(cm)
+      rf.cm <- rbind(rf.cm, cm)
+    }
+  } #concatenates confusion matrices
+  
+  #Save RF optimization data
+  write.csv(mbest.tab, "rf_param.csv", row.names = FALSE) #Performance of best performing model for each train/test
+  write.csv(mperf.tab, "rf_tuningperformance.csv", row.names = FALSE) #All performances 
+  write.csv(rf.cm, "rf_predictions.csv", row.names = FALSE) #All predicted vs. actual for all samples
+  write.csv(rfimp.tab, "rf_imp.csv", row.names = FALSE) #Variable importance table
+  
+  print("CSV Output Complete")
+  
+  #Aggregate and save variable importance (average MSE/average Gini) 
+  varimp2 <- rfimp.tab %>% group_by(predictors) %>% 
+    summarise_at(vars(X.IncMSE, IncNodePurity), list(name = mean)) %>% arrange(desc(IncNodePurity_name))
+  write.csv(varimp2, "imp_aggregate.csv")
+  print("Variable importance output complete")
+  
+  #Scatterplot of actual vs. predicted values 
+  tiff(paste0(vpred, "_scatter.tiff"), width = 500, height = 400, res = 100)
+  res <- rf.resplot(rf.cm)
+  print(res)
+  dev.off()
+  
+  print("Scatterplot output complete")
+  
+  setwd(paste(wd))
+}
 
 
 
 # Function: Classification RF ---------------------------------------------
-
-
-# Function:  -------------------------------------
-
-
+sa_rf <- function(vpred, mtry = 1:10, ntree = (1:10)*500,
+                  wd = wd.in, 
+                  custom.name = FALSE, 
+                  date = "", 
+                  dataframe.name = "", 
+                  predictors.name = "", 
+                  nset = 10){
+  
+  #Output parent folder
+  setwd(paste(wd))
+  
+  #Output folder
+  if(custom.name == FALSE){
+    save.name <- readline("Input save.name: df_RF_date_InputVariables_PredictVariable:")
+  }
+  if (custom.name == TRUE){
+    save.name <- paste(dataframe.name, date, predictors.name, vpred, sep = "_")
+  }
+  
+  dir.create(save.name)
+  directory <- paste(wd, save.name, sep = "/")
+  print(directory)
+  setwd(directory)
+  
+  #RF loop:
+  mbest.tab <- data.frame()
+  mperf.tab <- data.frame()
+  rfimp.tab <- data.frame()
+  classmatrix.names <- ""
+  print("Initiating RF Code")
+  for (i in 1:nset){ 
+    print(i)
+    print(Sys.time())
+    
+    mbest <- data.frame()
+    mperf <- data.frame()
+    
+    tname <- paste("train", i, sep = ".")
+    train <- get(tname)
+    hname <- paste("hold", i, sep = ".")
+    hold <- get(hname)
+    
+    print("Initate Tuning")
+    #Tuning
+    rf = tune.randomForest(train[,-which(names(train) %in% vpred)], #Remove predicted label from train df
+                           eval(parse(text = paste("train", vpred, sep = "$"))), #Select predicted label (train$vpred)
+                           data = train, 
+                           type = "class", mtry = mtry, ntree = ntree,
+                           tunecontrol = tune.control(sampling = "cross",cross=5))
+    
+    print("Tuning Complete")
+    #Model performance table
+    name <- rep(tname, length(mtry) * length(ntree)) 
+    mperf <- cbind(name, rf$performances)
+    mperf.tab <- rbind(mperf.tab, mperf)
+    
+    
+    #=== Test/Hold-Out Performance === 
+    #rfp = random forest with best parameters 
+    rfp = randomForest(train[,-which(names(train) %in% vpred)], #Remove predicted label from train df
+                       eval(parse(text = paste("train", vpred, sep = "$"))), #Select predicted label (train$vpred)
+                       data = train, 
+                       type = "class", mtry = rf$best.parameters$mtry, 
+                       ntree = rf$best.parameters$ntree, importance = TRUE)
+    
+    pred=predict(rfp,hold,type="class")
+    
+    #Model accuracy: 
+    rf.tab <- table(eval(parse(text = paste("hold", paste(vpred), sep = "$"))),pred)
+    diag <- 1-classAgreement(rf.tab)$diag
+    crand <- classAgreement(rf.tab)$crand
+    
+    
+    
+    assign(paste("rf.tab", i, sep = "."), rf.tab)
+    
+    name <- tname #Model best parameters & ME/ARI
+    mbest <- data.frame(cbind(name, rf$best.parameters$mtry, rf$best.parameters$ntree, diag, crand))
+    mbest.tab <- data.frame(rbind(mbest.tab,mbest))
+    
+    classmatrix.names <- c(classmatrix.names, paste("rf.tab", i, sep = "."))
+    
+    #Variable importance
+    rfimp<- randomForest::importance(rfp) %>% data.frame() %>% rownames_to_column(var = "predictors") %>% mutate(set = i)
+    rfimp.tab <- rbind(rfimp.tab, rfimp) #rf importance table for export
+    
+    print("Hold-Out Assessed")
+  } #rf code
+  print("RF Complete")
+  
+  
+  #Concatenate confusion matrices: 
+  rf.cm <- c()
+  for (i in classmatrix.names){
+    print(i)
+    if(i != ""){
+      cm <- get(i)
+      print(cm)
+      rf.cm <- rbind(rf.cm, cm)
+    }
+  }
+  
+  #Save RF optimization data:
+  write.csv(mbest.tab, "rf param.csv")
+  write.csv(mperf.tab, "rf tuning performance.csv")
+  write.csv(rf.cm, "rf cm.csv")
+  write.csv(rfimp.tab, "rf_imp.csv", row.names = FALSE) #Variable importance table
+  
+  print("CSV Output Complete")
+  
+  
+  
+  #OUTPUT: variable importance for the best model/training set
+  #rfb = Best random forest model from all X training/test sets (e.g X = 10 sets)
+  #Aggregate and save variable importance (average MSE/average Gini) 
+  varimp2 <- rfimp.tab %P>% group_by(predictors) %P>% summarise_at(vars(MeanDecreaseAccuracy, MeanDecreaseGini), mean) %>% arrange(desc(MeanDecreaseGini))
+  print(head(varimp2))
+  write.csv(varimp2, "imp_aggregate.csv")
+  print("Aggregated variable importance output complete")
+  
+  
+  
+  print("Variable importance complete")
+  
+  setwd(paste(wd))
+}
 
 
 # Functions: Variable importance formatting --------------------------------
@@ -318,3 +670,25 @@ multi.density.plot <- function(df, #dataframe containing predictor variables and
   return(p_grid)
 }
 
+
+
+# Classification Matrix Aggregation ---------------------------------------
+cm.aggregate <- function(cm #cm object output from random forest functions
+                   ) 
+  #First column of input cm must be named "X"
+    #This is the default behaviour upon importing cm output from random forest functions
+    #User must not change column names from original output
+  {
+  cm.groups <- cm %>% select(-X) %>% colnames
+  cm.out <- cm %>% group_by(X) %>% summarise(across(cm.groups, ~ sum(.)))
+  return(cm.out)
+}
+
+cm.prop <- function(agg.cm #aggregated confusion matrix. Output from cm.aggregate function.
+                    )
+  #Expresses confusion matrix as the percentage of each class being classified by each other class
+{
+  cm.groups <- cm %>% select(-X) %>% colnames
+  cm.out <- agg.cm %>% mutate(across(cm.groups, ~ (./sum(., na.rm = TRUE)) %>% round(digits = 2)))
+  return(cm.out)
+}
