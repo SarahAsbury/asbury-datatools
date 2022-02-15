@@ -45,12 +45,22 @@ mtry.guide <- function(npred, #Numeric. Number of predictor variables.
 
   
 rf.resplot <- function(rf.cm){
+  accuracy.cor <- cor(rf.cm$actual, rf.cm$pred)
+  cor.sign <- ifelse(accuracy.cor > 0, "pos", "neg")
+  print(accuracy.cor)
+  print(cor.sign)
+
   resplot <- rf.cm %>%
     ggscatter(x = "actual", y = "pred",
               add = "reg.line", conf.int = TRUE,
               add.params = list(color = "blue",
                                 fill = "lightgray")) +
-    stat_cor(method = "pearson", aes(label = ..r.label..)) + 
+    stat_cor(method = "pearson", aes(label = ..r.label..), 
+             label.x = max(rf.cm$actual) * 0.8,
+             label.y = ifelse(cor.sign == "pos", 
+                                  max(rf.cm$pred) * 0.15, 
+                                  max(rf.cm$pred) * 0.85)
+             ) +
     geom_abline(intercept = 0, slope = 1, linetype = 2) + 
     xlim(0, max(rf.cm$actual)) + 
     ylim(0, max(rf.cm$pred))
