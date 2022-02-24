@@ -128,7 +128,7 @@ sa_rfreg <- function(vpred,
                      wd = getwd()
 )
 {
-  
+  # === Output setup ===
   #Output parent folder
   setwd(paste(wd))
   
@@ -145,7 +145,7 @@ sa_rfreg <- function(vpred,
   print(directory)
   setwd(directory)
   
-  
+  # === Train Random Forest ===
   #RF Loop
   mbest.tab <- data.frame()
   mperf.tab <- data.frame()
@@ -180,6 +180,11 @@ sa_rfreg <- function(vpred,
     mperf.tab <- rbind(mperf.tab, mperf)
     
     
+    
+    
+    
+    # === Validate Random Forest ===
+    
     #Test/Hold-Out Performance
     #rfp = random forest with best parameters 
     rfp = randomForest::randomForest(train[,-which(names(train) %in% vpred)], #Remove predicted label from train df
@@ -213,7 +218,7 @@ sa_rfreg <- function(vpred,
     mbest <- data.frame(cbind(name, rf$best.parameters$mtry, rf$best.parameters$ntree, mse, rmse, pearson, mape))
     mbest.tab <- data.frame(rbind(mbest.tab,mbest))
     
-    #Classification matrix (classification) or list of actual/predicted (regression)
+    #List of actual/predicted (regression)
     classmatrix.names <- c(classmatrix.names, paste("rf.tab", i, sep = "."))
     print("Hold-Out Assessed")
   } #rf trainings/testing code 
@@ -228,8 +233,10 @@ sa_rfreg <- function(vpred,
       print(cm)
       rf.cm <- rbind(rf.cm, cm)
     }
-  } #concatenates confusion matrices
+  } #concatenates actual vs. predicted tables 
   
+  
+  #=== Exports ===
   #Save RF optimization data
   write.csv(mbest.tab, "rf_param.csv", row.names = FALSE) #Performance of best performing model for each train/test
   write.csv(mperf.tab, "rf_tuningperformance.csv", row.names = FALSE) #All performances 
@@ -253,6 +260,12 @@ sa_rfreg <- function(vpred,
   print("Scatterplot output complete")
   
   setwd(paste(wd))
+  
+  
+  #=== Return results to environment === 
+  return(list(varimp = varimp2, 
+              rf.predictions = rf.cm, 
+              best.performance = mbest.tab))
 }
 
 
@@ -266,6 +279,7 @@ sa_rf <- function(vpred, mtry = 1:10, ntree = (1:10)*500,
                   predictors.name = "", 
                   nset = 10){
   
+  # === Output setup ===
   #Output parent folder
   setwd(paste(wd))
   
@@ -282,6 +296,8 @@ sa_rf <- function(vpred, mtry = 1:10, ntree = (1:10)*500,
   print(directory)
   setwd(directory)
   
+  
+  # === Train Random Forest ===
   #RF loop:
   mbest.tab <- data.frame()
   mperf.tab <- data.frame()
@@ -315,7 +331,7 @@ sa_rf <- function(vpred, mtry = 1:10, ntree = (1:10)*500,
     mperf.tab <- rbind(mperf.tab, mperf)
     
     
-    #=== Test/Hold-Out Performance === 
+    # === Validate Random Forest ===
     #rfp = random forest with best parameters 
     rfp = randomForest(train[,-which(names(train) %in% vpred)], #Remove predicted label from train df
                        eval(parse(text = paste("train", vpred, sep = "$"))), #Select predicted label (train$vpred)
@@ -360,6 +376,7 @@ sa_rf <- function(vpred, mtry = 1:10, ntree = (1:10)*500,
     }
   }
   
+  #=== Exports ===
   #Save RF optimization data:
   write.csv(mbest.tab, "rf param.csv")
   write.csv(mperf.tab, "rf tuning performance.csv")
@@ -383,7 +400,15 @@ sa_rf <- function(vpred, mtry = 1:10, ntree = (1:10)*500,
   print("Variable importance complete")
   
   setwd(paste(wd))
+  
+  #=== Return results to environment === 
+  re
+  return(list(varimp = varimp2, 
+              rf.cm = rf.cm, 
+              best.performance = mbest.tab))
 }
+
+
 
 
 # Functions: Variable importance formatting --------------------------------
@@ -432,9 +457,6 @@ select.varimp <- function(rf.type, metric)
 
 
 # Function: Variable Importance -------------------------------------------
-
-
-
 varimport_plot <- function(varimp, #dataframe of variable importance
                            rf.type, #One of: "class" or "reg"
                            metric = "gini", #One of: "mse", "gini", or "mda)
@@ -515,7 +537,7 @@ varimport_plot <- function(varimp, #dataframe of variable importance
       left_join(extract.names.df, by = "column_names")
     
     #Unit test: Top_pred and extract.names.df labels align
-    qc <- (xlab.extract$column_names == varimp$predictors) %>% data.frame() %>% rename(qc = ".") %>% count(qc) %>% unique
+    qc <- (xlab.extract$column_names == varimp$predictors) %>% data.frame() %>% rename(qc = ".") %>% dplyr::count(qc) %>% unique
     print(qc)
     if(qc[1] == FALSE){
       print("Error: Extract names dataframe labels do not align with predictor variable order")
@@ -684,21 +706,27 @@ multi.density.plot <- function(df, #dataframe containing predictor variables and
 
 # Classification Matrix Aggregation ---------------------------------------
 cm.aggregate <- function(cm #cm object output from random forest functions
-                   ) 
+) 
   #First column of input cm must be named "X"
-    #This is the default behaviour upon importing cm output from random forest functions
-    #User must not change column names from original output
-  {
+  #This is the default behaviour upon importing cm output from random forest functions
+  #User must not change column names from original output
+{
   cm.groups <- cm %>% select(-X) %>% colnames
   cm.out <- cm %>% group_by(X) %>% summarise(across(cm.groups, ~ sum(.)))
   return(cm.out)
 }
 
 cm.prop <- function(agg.cm #aggregated confusion matrix. Output from cm.aggregate function.
-                    )
+)
   #Expresses confusion matrix as the percentage of each class being classified by each other class
 {
   cm.groups <- cm %>% select(-X) %>% colnames
   cm.out <- agg.cm %>% mutate(across(cm.groups, ~ (./sum(., na.rm = TRUE)) %>% round(digits = 2)))
   return(cm.out)
 }
+
+
+
+
+# Function: Random Forest Wrapper -----------------------------------------
+#Wrapper for both regression and classification random forest

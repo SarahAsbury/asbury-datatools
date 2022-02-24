@@ -19,7 +19,7 @@ physeq.create <- function(asvdf, #Dataframe; Rownames = sequences (e.g CCTGTT...
   
   #=== Wrangling === 
   #Standardize ID column 
-  mapdf <- mapdf %>% rename(StudyID = paste(ID.col))
+  mapdf <- mapdf %>% dplyr::rename(StudyID = paste(ID.col))
   
   #=== asvdf === 
   #Remove asvdf rownames
@@ -382,7 +382,15 @@ physeq.mra.prevalence <- function(physeq,
 
 # Function: Glom algorithm -----------------------------------------------
 retain.resolve_genus <- function(physeq, #count phyloseq object
-                                 dir = getwd()){
+                                 dir = getwd(),
+                                 relabund_prev.ASV = c(0.001, 0.1), #threshold for mean relative abundance [1] AND prevalence [2]. Taxa must pass both criteria for retention. ASV level filter. 
+                                 prev.ASV = 0.5, #threshold for prevalence-only. ASV level filter. 
+                                 relabund_prev.genus = c(0.0001, 0.1), #threshold for mean relative abundance [1] AND prevalence [2]. Taxa must pass both criteria for retention. genus level filter. ,
+                                 prev.genus = 0.5 #threshold for prevalence-only. Genus level filter. 
+                                 )
+  
+  #If taxa pass relabund_prev or prev filters, they will be retained.
+  {
   
   # ====== Unit tests: User input ====== 
   #Unit test: did user input count data? 
@@ -496,7 +504,7 @@ retain.resolve_genus <- function(physeq, #count phyloseq object
   # ====== Identify and separate ASVs that pass/fail criteria ======
   print("Step 2: Identify ASVs that pass or fail criteria.")
   
-  pass <- rel.criteria %>% filter(mean_relabund > 0.001 & prev > 0.1 | prev > 0.5) %>% select(OTU) #Taxa that do not need to be glommed (meet criteria)
+  pass <- rel.criteria %>% filter(mean_relabund > relabund_prev.ASV[1] & prev > relabund_prev.ASV[2] | prev > prev.ASV) %>% select(OTU) #Taxa that do not need to be glommed (meet criteria)
   fail <- rel.criteria %>% filter(!OTU %in% pass$OTU & !OTU %in% emptytaxa.df$OTU) %>% select(OTU) #Taxa that require glom (below abund/prevalence thresholds) & with empty taxa removed 
   
   #Log results
@@ -584,7 +592,7 @@ retain.resolve_genus <- function(physeq, #count phyloseq object
   setwd(retain_resolve.path)
   
   #Identify genus-level taxa that pass/fail criteria
-  pass <- rel.criteria %>% filter(mean_relabund > 0.0001 & prev > 0.1 | prev > 0.5) 
+  pass <- rel.criteria %>% filter(mean_relabund > relabund_prev.genus[1] & prev > relabund_prev.genus[2] | prev > prev.genus) 
   fail <- rel.criteria %>% filter(!OTU %in% pass$OTU)
   
   
@@ -650,7 +658,7 @@ retain.resolve_genus <- function(physeq, #count phyloseq object
   #Taxa df
   taxdf.other <- data.frame(c("Other", "Other", "Other", "Other", "Other", "Other")) %>% t() %>% data.frame()
   row.names(taxdf.other) <- "other"
-  colnames(taxdf.other) <-  colnames(taxdf)
+  colnames(taxdf.other) <-  colnames(physeq %>% tax_table %>% data.frame)
   taxdf.other <- taxdf.other %>% as.matrix()
   
   #Create phyloseq object 
