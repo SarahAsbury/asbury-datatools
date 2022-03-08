@@ -8,7 +8,7 @@ library(ggpubr)
 library(cowplot)
 library(randomForest)
 library(ViewPipeSteps) #    %P>% = print and pipe operator
-
+library(e1071)
 
 # Functions: supporting rf ---------------------------------------------------
 mtry.guide <- function(npred, #Numeric. Number of predictor variables. 
@@ -43,8 +43,9 @@ mtry.guide <- function(npred, #Numeric. Number of predictor variables.
   return(list(ideal.mtry = m, upper.mtry = m.upper, lower.mtry = m.lower, range = range))
 }
 
-  
-rf.resplot <- function(rf.cm){
+rf.resplot <- function(rf.cm)
+  #results plot for random forest regression
+  {
   accuracy.cor <- cor(rf.cm$actual, rf.cm$pred)
   cor.sign <- ifelse(accuracy.cor > 0, "pos", "neg")
   print(accuracy.cor)
@@ -110,6 +111,9 @@ split.ratio <- function(df,
     assign(paste("train", i, sep = "."), x3[sample,], envir = .GlobalEnv) #train.x (using tune wrapper downstream to separate into train vs. validation)
     assign(paste("hold", i, sep = "."), x3[-sample,], envir = .GlobalEnv) #hold.x; test/hold-out set
   }
+  
+  return(x3)
+              
 }
 
 
@@ -209,13 +213,13 @@ sa_rfreg <- function(vpred,
     rmse <- sqrt(mse)
     pearson <- cor(pred, actual)
     mape <- mean(((abs(actual - pred))/actual)*100) #mean absolute percent error; better than MPE because +/- absolute values don't cancel out
-    
+    mae <- mean((abs(actual-pred))) #mean absolute error 
     
     assign(paste("rf.tab", i, sep = "."), pred.tab) #list of actual/predicted 
     
     #Hold set statistics of best performing model for each train/test set 
     name <- tname #Model best parameters & ME/ARI
-    mbest <- data.frame(cbind(name, rf$best.parameters$mtry, rf$best.parameters$ntree, mse, rmse, pearson, mape))
+    mbest <- data.frame(cbind(name, rf$best.parameters$mtry, rf$best.parameters$ntree, mse, rmse, pearson, mape, mae))
     mbest.tab <- data.frame(rbind(mbest.tab,mbest))
     
     #List of actual/predicted (regression)
@@ -238,6 +242,7 @@ sa_rfreg <- function(vpred,
   
   #=== Exports ===
   #Save RF optimization data
+  colnames(mbest.tab) <- c("set", "mtry", "ntree", "mse", "rmse", "pearson", "mape", "mae")
   write.csv(mbest.tab, "rf_param.csv", row.names = FALSE) #Performance of best performing model for each train/test
   write.csv(mperf.tab, "rf_tuningperformance.csv", row.names = FALSE) #All performances 
   write.csv(rf.cm, "rf_predictions.csv", row.names = FALSE) #All predicted vs. actual for all samples
@@ -318,7 +323,7 @@ sa_rf <- function(vpred, mtry = 1:10, ntree = (1:10)*500,
     
     print("Initate Tuning")
     #Tuning
-    rf = tune.randomForest(train[,-which(names(train) %in% vpred)], #Remove predicted label from train df
+    rf = e1071::tune.randomForest(train[,-which(names(train) %in% vpred)], #Remove predicted label from train df
                            eval(parse(text = paste("train", vpred, sep = "$"))), #Select predicted label (train$vpred)
                            data = train, 
                            type = "class", mtry = mtry, ntree = ntree,
@@ -354,6 +359,7 @@ sa_rf <- function(vpred, mtry = 1:10, ntree = (1:10)*500,
     mbest <- data.frame(cbind(name, rf$best.parameters$mtry, rf$best.parameters$ntree, diag, crand))
     mbest.tab <- data.frame(rbind(mbest.tab,mbest))
     
+    
     classmatrix.names <- c(classmatrix.names, paste("rf.tab", i, sep = "."))
     
     #Variable importance
@@ -378,6 +384,7 @@ sa_rf <- function(vpred, mtry = 1:10, ntree = (1:10)*500,
   
   #=== Exports ===
   #Save RF optimization data:
+  colnames(mbest.tab) <- c("set", "mtry", "ntree", "ME", "ARI")
   write.csv(mbest.tab, "rf param.csv")
   write.csv(mperf.tab, "rf tuning performance.csv")
   write.csv(rf.cm, "rf cm.csv")
@@ -402,7 +409,6 @@ sa_rf <- function(vpred, mtry = 1:10, ntree = (1:10)*500,
   setwd(paste(wd))
   
   #=== Return results to environment === 
-  re
   return(list(varimp = varimp2, 
               rf.cm = rf.cm, 
               best.performance = mbest.tab))
@@ -462,8 +468,8 @@ varimport_plot <- function(varimp, #dataframe of variable importance
                            metric = "gini", #One of: "mse", "gini", or "mda)
                            selection_type = "random_top", #One of: random_top, top
                            top = 20, #number of "top" predictor variables to plot
-                           xlab = NA, #Labels to use form plotting. NA will use R column names. Accepts a character vector or "extract" instructions.
-                           extract.names.df = NA  
+                           xlab = NA, #Labels to use for plotting. NA will use R column names. Accepts a character vector or "extract" instructions.
+                           extract.names.df = NA  #provide df if xlab = "extract". 1st col is desired x label names. 2nd col is how columns appear in df input. 
 )
   #Lollipop plot of variable importance 
 
@@ -493,14 +499,14 @@ varimport_plot <- function(varimp, #dataframe of variable importance
   #=== Variable importance dataframe ===
   if(selection_type == "random_top")
   {
-    toppred <- varimp %>% slice_max(order_by = get(y), n = 20)
+    toppred <- varimp %>% slice_max(order_by = get(y), n = top)
     minpred <- varimp %>% slice_min(order_by = get(y), n = round(top*0.25, digits = 0))
     randompred <- varimp %>% filter(!(predictors %in% toppred$predictors | predictors %in% minpred$predictors)) %>% 
       slice_sample(n = round(top*0.75, digits = 0))
     
     varimp <- varimp %>% filter(predictors %in% toppred$predictors | predictors %in% minpred$predictors | predictors %in% randompred$predictors)
   }
-  
+
   if(selection_type == "top")
     #Take top 20 taxa (or specified)
   {
@@ -513,12 +519,12 @@ varimport_plot <- function(varimp, #dataframe of variable importance
   
   
   
-  
   #=== Predictor variable labels ===
-  xlab.edit <- ifelse(class(xlab) == "logical" & xlab[1] %>% is.na, 
-                           FALSE, 
-                           TRUE) #TRUE = edit predictor labels; FALSE = predictor labels are same as R column names 
+  xlab.edit <- ifelse(is.na(xlab), 
+                           FALSE, #No user-input x labels provided. Use varimp column names.
+                           TRUE) #edit predictor labels according to user-input
   
+
   if(!(is.na(xlab)) & xlab == "extract")
     #extract method
   {
@@ -550,7 +556,7 @@ varimport_plot <- function(varimp, #dataframe of variable importance
   }
   
   #Unit test: are there enough xlabels supplied?
-  if(class(xlab) != "logical"){
+  if(is.na(xlab) == FALSE){
     if(nrow(xlab) != nrow(varimp))
       {
     print("Error: Mismatched number of x labels and predictor variables")
@@ -559,12 +565,10 @@ varimport_plot <- function(varimp, #dataframe of variable importance
     }
   }
 
-  
-  
-  
+
   
   #=== Plot ===
-  ggdotchart(varimp, x = paste(x), y = paste(y),
+  p <- ggdotchart(varimp, x = paste(x), y = paste(y),
              sorting = "ascending",                        
              ggtheme = theme_pubr(), 
              add = "segment",
@@ -575,6 +579,8 @@ varimport_plot <- function(varimp, #dataframe of variable importance
       } + 
     coord_flip() + 
     theme(axis.text.x = element_text(angle = 0, vjust = 0.5, hjust = 0.5))
+  
+  return(p)
 }
 
 
@@ -611,7 +617,7 @@ multi.density.plot <- function(df, #dataframe containing predictor variables and
                                scale = 0.8, #cowplot scale graphs
                                ncol = 2, #cowplot number of cols
                                xlab = NA, #one of: NA, "extract", "blank", or list of custom x labels listed according to plot order 
-                               extract.names.df = NA #provide df if xlab = "extract". 1st col must be desired x label names. 2nd col must be how they appear as R columns.
+                               extract.names.df = NA #provide df if xlab = "extract". 1st col is desired x label names. 2nd col is how columns appear in df input. 
                                )
 
 #extract.names.df formatting:
@@ -627,16 +633,18 @@ multi.density.plot <- function(df, #dataframe containing predictor variables and
 
   top_pred <- varimp %>% slice_max(order_by = get(metric.name), n = top) %>% pull(predictors)
   
-  #Set x labels
-  if(xlab == "blank" & !(is.na(xlab))){
+  # === Set x labels === 
+  #No x labels
+  if(xlab == "blank" & !(is.na(xlab))){ 
     xlab <- rep("", length(top_pred))
   }
   
+  #X labels extraccted from df
   if(xlab == "extract" & !(is.na(xlab)))
     #extract method
     {
     #Unit test: extract.names.df provided
-    if(class(extract.names.df) == "logical")
+    if(!(is.na(extract.names.df)))
       {
       if(extract.names.df[1] %>% is.na){
         print("Error: Provide dataframe to extract variables.")
@@ -664,7 +672,7 @@ multi.density.plot <- function(df, #dataframe containing predictor variables and
   }
   
   #Unit test: are there enough xlabels supplied?
-  if(class(xlab) != "logical"){
+  if(is.na(xlab) == FALSE){
     if(length(xlab) != length(top_pred)){
     print("Error: Mismatched number of x labels and predictor variables")
     print("Running UNDECLARED to kill script.")
@@ -685,7 +693,7 @@ multi.density.plot <- function(df, #dataframe containing predictor variables and
                x = j, 
                dvar = response, 
                tsize = tsize) + theme(legend.position = "none") + 
-      {if(class(xlab) != "logical") 
+      {if(is.na(xlab) == FALSE) 
                  xlab(xlab[i])} 
     
     
@@ -698,6 +706,7 @@ multi.density.plot <- function(df, #dataframe containing predictor variables and
   #Extract legend
   plotlist[[length(plotlist) + 1]] <- gdens(df = df, x = top_pred[1], dvar = response, tsize = tsize) %>% get_legend()
   
+  #Plot grid
   p_grid <- cowplot::plot_grid(plotlist = plotlist, scale = scale, ncol = ncol)
   return(p_grid)
 }
@@ -720,7 +729,7 @@ cm.prop <- function(agg.cm #aggregated confusion matrix. Output from cm.aggregat
 )
   #Expresses confusion matrix as the percentage of each class being classified by each other class
 {
-  cm.groups <- cm %>% select(-X) %>% colnames
+  cm.groups <- agg.cm %>% select(-X) %>% colnames
   cm.out <- agg.cm %>% mutate(across(cm.groups, ~ (./sum(., na.rm = TRUE)) %>% round(digits = 2)))
   return(cm.out)
 }
@@ -728,5 +737,37 @@ cm.prop <- function(agg.cm #aggregated confusion matrix. Output from cm.aggregat
 
 
 
-# Function: Random Forest Wrapper -----------------------------------------
-#Wrapper for both regression and classification random forest
+
+
+
+
+# Mean and Stdev of Model Performance Indicators  -------------------------
+mean_var.rfmodel <- function(rf.type, #"class" or "reg"
+                             performance.table #mbest.tab output
+                             ){
+  if(rf.type == "class"){
+   mp <- performance.table %>% mutate(across(.cols = c("ME", "ARI"), .fns = as.numeric)) %>% 
+     summarise(across(.cols = c("ME", "ARI"),
+                      .fns = list(Mean = mean, SD = sd)
+                      )) 
+   
+   model.performance.out <- data.frame(mean = c(mp$ME_mean, mp$ARI_Mean), 
+                                       sd = c(mp$ME_SD, mp$ARI_SD))
+   row.names(model.performance.out) <- c("ME", "ARI")
+  }
+  
+  if(rf.type == "reg"){
+    mp <- performance.table %>% mutate(across(.cols = c("mse", "rmse", "pearson", "mape", "mae"), .fns = as.numeric)) %>% 
+      summarise(across(.cols = c("mse", "rmse", "pearson", "mape", "mae"), 
+                       .fns = list(mean = mean, SD = sd)))
+    print(mp)
+    model.performance.out <- data.frame(mean = c(mp$mse_mean, mp$rmse_mean, mp$pearson_mean, mp$mape_mean, mp$mae_mean),
+                                        sd = c(mp$mse_SD, mp$rmse_SD, mp$pearson_SD, mp$mape_SD, mp$mae_SD)
+    )
+    
+    row.names(model.performance.out) <- c("mse", "rmse", "pearson", "mape", "mae")
+  }
+  return(model.performance.out)
+  
+}
+
