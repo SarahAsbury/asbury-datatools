@@ -750,8 +750,7 @@ mean_var.rfmodel <- function(rf.type, #"class" or "reg"
      summarise(across(.cols = c("ME", "ARI"),
                       .fns = list(Mean = mean, SD = sd)
                       )) 
-   
-   model.performance.out <- data.frame(mean = c(mp$ME_mean, mp$ARI_Mean), 
+   model.performance.out <- data.frame(mean = c(mp$ME_Mean, mp$ARI_Mean), 
                                        sd = c(mp$ME_SD, mp$ARI_SD))
    row.names(model.performance.out) <- c("ME", "ARI")
   }

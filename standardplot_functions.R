@@ -37,10 +37,17 @@ ut.scaled.sd <- function(df){
 
 pca.hclust.fun <- function(k.in, #k number of clusters to generate. Max number = 8 for this function (limited by Dark2 palette). 
                     df, #dataframe. Conains variables for PCA. Must be scaled and NA removed. 
-                    label #character vector containing group labels in the same order as df observations order. 
+                    label #each sample group labels in the same order as df observations order. (i.e df$group)
                     )
   #Requires a scaled dataframe without NA
   {
+  
+  #Is the input a dataframe? 
+  if(class(df) == FALSE){
+    print("Error: input df is not dataframe class")
+    print("Running UNDECLARED to kill script.")
+    UNDECLARED()
+  }
   
   #Unit test: scaled df? 
   if(ut.scaled.sd(df) == FALSE){
@@ -48,9 +55,10 @@ pca.hclust.fun <- function(k.in, #k number of clusters to generate. Max number =
     print("Running UNDECLARED to kill script.")
     UNDECLARED()
   }
-  
   #Principal Components
+  
   PCA.scaled <<- prcomp(df, scale. = FALSE)
+
   summary(PCA.scaled)
   PCA.scaled
   PCA.scaled.values <- PCA.scaled$x %>% data.frame()#Store PCA values for plotting in scatter plot
@@ -91,9 +99,11 @@ pca.hclust.fun <- function(k.in, #k number of clusters to generate. Max number =
 
 #2D plot
 
-pca.ggplot <- function(pca.plot.df, #contains PC1.scaled, PC2.scaled and label as a single dataframe
-                       prcomp.in, #output R PCA function. Used to get variance for axis labels. 
-                       ellipses = TRUE)
+pca.ggplot <- function(pca.plot.df = pca.plot, #contains PC1.scaled, PC2.scaled and label as a single dataframe
+                       prcomp.in = PCA.scaled, #output R PCA function. Used to get variance for axis labels. 
+                       ellipses = TRUE,
+                       group = "label"
+                       )
   {
   #Component variance for axis labels
   extract.variance <- summary(prcomp.in)
@@ -105,10 +115,10 @@ pca.ggplot <- function(pca.plot.df, #contains PC1.scaled, PC2.scaled and label a
   y.axis.name <- paste0("PC2 (", round(pc2.variance * 100, digits = 1), "%)")
   
   #Plot 
-  plot <- ggplot(pca.plot.df, aes(x = PC1.scaled, y = PC2.scaled, color = label)) + geom_point() + theme_classic() +
-    xlab(x.axis.name) + ylab(y.axis.name) + 
+  plot <- ggplot(pca.plot.df, aes(x = PC1.scaled, y = PC2.scaled, color = eval(parse(text = paste(group))))) + geom_point() + theme_classic() +
+    xlab(x.axis.name) + ylab(y.axis.name) + theme(legend.title=element_blank()) + 
     {if(ellipses == TRUE)
-      stat_ellipse(geom = "polygon", alpha = 0.05, aes(fill = label))
+      stat_ellipse(geom = "polygon", alpha = 0.05, aes(fill =eval(parse(text = paste(group)))))
     } 
     
   return(plot)}

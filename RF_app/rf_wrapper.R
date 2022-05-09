@@ -213,11 +213,12 @@ rf_standard <- function(rf.type, #"class" or "reg",
   log_print(paste0("Variable importance plot type:", varimp.param["selection_type"]))
   log_print(paste0("Number of top predictor variables to plot:", top.variables))
   log_print(paste0("Manually supplied x labels:", varimp.param["xlab"]))
-  log_print(paste0("Metric used to rank variable importance:", varimp.param["metric"]))
-  if(varimp.param["xlab"] == "extract"){
+  log_print(paste0("Metric used to rank variable importance for density plot order:", varimp.param["metric"]))
+  if(!(is.na(varimp.param["xlab"]))){
+    if(varimp.param["xlab"] == "extract"){
     log_print("X label name extraction dataframe:")
     log_print(extract.names.df)
-     }
+     }}
 
   # Variable Importance Plots -----------------------------------------------
   #Automatic assignment of selection type
@@ -225,19 +226,48 @@ rf_standard <- function(rf.type, #"class" or "reg",
   varimp <- rf.results$varimp
   log_print(varimp)
 
+    varimp_plot <- varimport_plot(varimp = varimp,
+                                  rf.type = rf.type,
+                                  metric = "gini",
+                                  selection_type = varimp.param["selection_type"],
+                                  xlab = varimp.param["xlab"],
+                                  extract.names.df = extract.names.df,
+                                  top = top.variables)
+    
+    tiff("GiniVarimp_plot.tiff", res = 300, height = 1700, width = 1500)
+    print(varimp_plot)
+    dev.off()
+    
+    
+    if(rf.type == "reg"){
+    varimp_plot <- varimport_plot(varimp = varimp,
+                                  rf.type = rf.type,
+                                  metric = "mse",
+                                  selection_type = varimp.param["selection_type"],
+                                  xlab = varimp.param["xlab"],
+                                  extract.names.df = extract.names.df,
+                                  top = top.variables)
+    
+    tiff("MSEVarimp_plot.tiff", res = 300, height = 1700, width = 1500)
+    print(varimp_plot)
+    dev.off()
+    }
+    
   
-  varimp_plot <- varimport_plot(varimp = varimp,
-                                rf.type = rf.type,
-                                metric = varimp.param["metric"],
-                                selection_type = varimp.param["selection_type"],
-                                xlab = varimp.param["xlab"],
-                                extract.names.df = extract.names.df,
-                                top = top.variables)
-  
-  tiff("varimp_plot.tiff", res = 300, height = 1700, width = 1500)
-  print(varimp_plot)
-  dev.off()
-  
+    if(rf.type == "class"){
+      varimp_plot <- varimport_plot(varimp = varimp,
+                                    rf.type = rf.type,
+                                    metric = "mda",
+                                    selection_type = varimp.param["selection_type"],
+                                    xlab = varimp.param["xlab"],
+                                    extract.names.df = extract.names.df,
+                                    top = top.variables)
+      
+      tiff("MDAVarimp_plot.tiff", res = 300, height = 1700, width = 1500)
+      print(varimp_plot)
+      dev.off()
+    }
+    
   
   
 
